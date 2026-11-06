@@ -1,0 +1,99 @@
+---
+- name: Allow Kubernetes traffic
+  ansible.posix.firewalld:
+    zone: public
+    port: "{{ item }}"
+    permanent: true
+    immediate: true
+    state: enabled
+  loop:
+    - 10250/tcp
+    - 179/tcp
+
+- name: Allow Calico IP-in-IP traffic
+  ansible.posix.firewalld:
+    zone: public
+    protocol: ipip
+    permanent: true
+    immediate: true
+    state: enabled
+
+- name: Disable swap
+  ansible.builtin.command: swapoff -a
+
+- name: Disable swap permanently in fstab
+  ansible.builtin.replace:
+    path: /etc/fstab
+    regexp: '^([^#].*?\sswap\s+sw\s+.*)$'
+    replace: '# \1'
+
+- name: Load kernel modules for Kubernetes
+  community.general.modprobe:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - overlay
+    - br_netfilter
+
+- name: Ensure kernel modules are loaded on boot
+  ansible.builtin.copy:
+    dest: /etc/modules-load.d/k8s.conf
+    content: |
+      overlay
+      br_netfilter
+
+- name: Configure sysctl params for Kubernetes
+  ansible.posix.sysctl:
+    name: "{{ item.name }}"
+    value: "{{ item.value }}"
+    state: present
+    reload: true
+  loop:
+    - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+    - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+    - { name: 'net.ipv4.ip_forward', value: '1' }
+
+- name: Add Kubernetes repository
+  ansible.builtin.copy:
+    dest: /etc/yum.repos.d/kubernetes.repo
+    content: |
+      [kubernetes]
+      name=Kubernetes
+      baseurl=https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/rpm/
+      enabled=1
+      gpgcheck=1
+      gpgkey=https://pkgs.k8s.io/core:/stable:/{{ kubernetes_version }}/rpm/repodata/repomd.xml.key
+
+- name: Add CRI-O repository
+  ansible.builtin.copy:
+    dest: /etc/yum.repos.d/cri-o.repo
+    content: |
+      [cri-o]
+      name=CRI-O
+      baseurl=https://download.opensuse.org/repositories/isv:/cri-o:/stable:/{{ kubernetes_version }}/rpm/
+      enabled=1
+      gpgcheck=1
+      gpgkey=https://download.opensuse.org/repositories/isv:/cri-o:/stable:/{{ kubernetes_version }}/rpm/repodata/repomd.xml.key
+
+- name: Install kubelet, kubeadm, and kubectl
+  ansible.builtin.dnf:
+    name:
+      - container-selinux
+      - cri-o
+      - kubelet
+      - kubeadm
+      - kubectl
+    state: present
+    update_cache: yes
+
+- name: Enable and start cri-o
+  ansible.builtin.systemd:
+    name: crio
+    enabled: yes
+    state: started
+
+- name: Enable and start kubelet
+  ansible.builtin.systemd:
+    name: kubelet
+    enabled: yes
+    state: started
