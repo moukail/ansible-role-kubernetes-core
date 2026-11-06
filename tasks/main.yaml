@@ -86,14 +86,11 @@
     state: present
     update_cache: yes
 
-- name: Enable and start cri-o
+- name: Enable and start cri-o & kubelet
   ansible.builtin.systemd:
-    name: crio
+    name: "{{ item }}"
     enabled: yes
     state: started
-
-- name: Enable and start kubelet
-  ansible.builtin.systemd:
-    name: kubelet
-    enabled: yes
-    state: started
+  loop:
+    - crio
+    - kubelet
